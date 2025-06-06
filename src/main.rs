@@ -1,5 +1,5 @@
 use dotenv::dotenv;
-use grammers_client::types::{Chat, Downloadable, Message};
+use grammers_client::types::{Chat, Downloadable, Media, Message};
 use grammers_client::{Client, InputMedia, InputMessage, Update};
 use tokio::time::interval;
 use std::time::Duration;
@@ -103,8 +103,7 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Resul
             Update::NewMessage(msg) => {
                 if let Some(username) = msg.chat().username() {
                     if username == target_channel {
-                        // Значит получили обновление из таргет канала
-                        println!("1");
+                        // Значит получили обновление из таргет канал
                         continue;
                     }
                 }
@@ -112,20 +111,45 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Resul
                 match msg.chat() {
                     Chat::Channel(ch) => {
                         if ch.raw.noforwards {
-                            println!("Не возможно переслать");
+                            println!("Группа с запретом на копирование, где альбом сгрупирован");
                             if let Some(group_id) = msg.grouped_id() {
                                 println!("Группа, собираем!");
                                 group_handler.add_message(group_id, msg.clone()).await;
                                 
                                 
                             } else {
-                                println!("Не группа, просто качаем и отправляем");
+                                println!("Группа с запретом, где одно медиа");
                                 if let Some(media) = msg.media() {
+                                    let mut path = String::new();
+                                    match media.clone() {
+                                        Media::Document(doc) => {
+                                            // Получаем расширение документа
+                                            if let Some(mime) = doc.mime_type() {
+                                                println!("doc: {}", mime);
+                                                path = format!("./document.{}", mime.split('/').last().unwrap());
+                                            }
+                                        }
+                                        Media::Photo(phot) => {
+                                            path = "./image.jpg".to_string();
+                                        },
+                                        d => {
+                                            println!("Media: {:#?}", d);
+                                        }
+                                    }
                                     let down = Downloadable::Media(media.clone());
-                                    client.download_media(&down, "./image.jpg").await?;
+                                    client.download_media(&down, &path).await?;
 
-                                    let uploaded = client.upload_file("./image.jpg").await?;
-                                    client.send_message(target.clone(), InputMessage::text(msg.text()).photo(uploaded)).await?;
+                                    let uploaded = client.upload_file(&path).await?;
+
+                                    match media.clone() {
+                                        Media::Document(_) => {
+                                            client.send_message(target.clone(), InputMessage::text(msg.text()).document(uploaded)).await?;
+                                        },
+                                        Media::Photo(_) => {
+                                            client.send_message(target.clone(), InputMessage::text(msg.text()).photo(uploaded)).await?;
+                                        }
+                                        _ => {}
+                                    }
                                 } else {
                                     client.send_message(target.clone(), InputMessage::text(msg.text())).await?;
                                 }
