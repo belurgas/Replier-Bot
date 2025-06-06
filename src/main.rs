@@ -1,33 +1,16 @@
 use dotenv::dotenv;
 use grammers_client::types::{Chat, Downloadable, Message};
-use grammers_client::{Client, Config, InputMedia, InputMessage, SignInError, Update};
-use grammers_session::Session;
+use grammers_client::{Client, InputMedia, InputMessage, Update};
 use tokio::time::interval;
-use std::env;
-use std::io::{self, BufRead as _, Write as _};
 use std::time::Duration;
 
 use crate::handlers::MediaGroupHandler;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-const SESSION_FILE: &str = "session.session";
 
 mod handlers;
 mod config;
-
-fn prompt(message: &str) -> Result<String> {
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-    stdout.write_all(message.as_bytes())?;
-    stdout.flush()?;
-
-    let stdin = io::stdin();
-    let mut stdin = stdin.lock();
-
-    let mut line = String::new();
-    stdin.read_line(&mut line)?;
-    Ok(line)
-}
+mod login;
 
 async fn join_channels(client: &mut Client, channels: &Vec<String>) {
     for username in channels {
@@ -173,45 +156,6 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Resul
     }
 }
 
-async fn login(api_id: i32, api_hash: String) -> Client {
-    let config = Config {
-        session: Session::load_file_or_create("session.session").unwrap(),
-        api_id,
-        api_hash,
-        params: Default::default(),
-    };
-
-    let client = Client::connect(config).await.unwrap();
-    if !client.is_authorized().await.unwrap() {
-        let phone = prompt("Введите номер телефона: ").unwrap();
-        let token = client.request_login_code(&phone).await.unwrap();
-        let code = prompt("Введите код из Tg: ").unwrap();
-        let signed_in = client.sign_in(&token, &code).await;
-        match signed_in {
-            Err(SignInError::PasswordRequired(password_token)) => {
-                let hint = password_token.hint().unwrap_or("None");
-                let prompt_message = format!("Введённый пароль (hint {}): ", &hint);
-                let password = prompt(prompt_message.as_str()).unwrap();
-
-                client
-                    .check_password(password_token, password.trim())
-                    .await.unwrap();
-            }
-            Ok(_) => (),
-            Err(e) => panic!("{}", e),
-        }
-        println!("Мы внутри");
-        match client.session().save_to_file(SESSION_FILE) {
-            Ok(_) => {}
-            Err(e) => {
-                println!("NOTE: failed to save the session, will sign out when done: {e}");
-            }
-        }
-    }
-
-    client
-}
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -224,10 +168,12 @@ async fn main() -> Result<()> {
     let api_hash = init_config.main_config.api_hash;
     let channels = init_config.bot_settings.source_channels;
     let target = init_config.bot_settings.target_channel;
+    let session_file_name = init_config.main_config.session_file_name;
+    let session_file_name = format!("{}.session", session_file_name);
 
     println!("{:#?}", config);
 
-    let mut client = login(api_id, api_hash).await;
+    let mut client = login::login(api_id, api_hash, &session_file_name).await;
     join_channels(&mut client, &channels).await;
     if let Err(e) = monitor_and_forward(&mut client, &target).await {
         eprintln!("Error from monitor_and_forward: {:?}", e)
