@@ -1,74 +1,19 @@
 use dotenv::dotenv;
-use grammers_client::types::{Chat, Downloadable, Media, Message};
+use grammers_client::types::{Chat, Downloadable, Message};
 use grammers_client::{Client, Config, InputMedia, InputMessage, SignInError, Update};
 use grammers_session::Session;
-use tokio::sync::Mutex;
-use tokio::time::{interval, sleep, Instant};
-use std::collections::HashMap;
+use tokio::time::interval;
 use std::env;
 use std::io::{self, BufRead as _, Write as _};
-use std::sync::Arc;
 use std::time::Duration;
+
+use crate::handlers::MediaGroupHandler;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const SESSION_FILE: &str = "session.session";
 
 mod handlers;
-
-/// Структура для обработки Media
-#[derive(Debug, Clone)]
-struct MediaGroupHandler {
-    /// Мутекс HashMap хранящий grouped_id и вектор сообщений
-    groups: Arc<Mutex<HashMap<i64, Vec<Message>>>>,
-    /// Метка. Когда последгий раз был добавлено Media. 
-    /// Т.к альбом получается в client.next_update() последовательными обновлениями с минимальными задержками
-    last_seen: Arc<Mutex<HashMap<i64, Instant>>>,
-    /// Время ожидания Media
-    timeout: Duration,
-}
-
-impl MediaGroupHandler {
-    /// Инициализация структуры медиа группы
-    async fn new(timeout: Duration) -> Self {
-        Self {
-            groups: Arc::new(Mutex::new(HashMap::new())),
-            last_seen: Arc::new(Mutex::new(HashMap::new())),
-            timeout,
-        }
-    }
-
-    /// Добавляем/Создаём HashMap альбома GroupedID
-    /// Фиксируем last_seen
-    async fn add_message(&self, group_id: i64, message: Message) {
-        let mut groups = self.groups.lock().await;
-        let mut last_seen = self.last_seen.lock().await;
-
-        groups.entry(group_id).or_default().push(message);
-        last_seen.insert(group_id, Instant::now());
-    }
-
-    /// Получаем все группы, у которых вышел timeout
-    async fn get_expired_groups(&self) -> Vec<(i64, Vec<Message>)> {
-        let now = Instant::now();
-        let mut expired = Vec::new();
-
-        let mut groups = self.groups.lock().await;
-        let mut last_seen = self.last_seen.lock().await;
-
-        last_seen.retain(|&group_id, &mut seen| {
-            if now.duration_since(seen) >= self.timeout {
-                if let Some(messages) = groups.remove(&group_id) {
-                    expired.push((group_id, messages));
-                }
-                false
-            } else {
-                true
-            }
-        });
-
-        expired
-    }
-}
+mod config;
 
 fn prompt(message: &str) -> Result<String> {
     let stdout = io::stdout();
@@ -84,7 +29,7 @@ fn prompt(message: &str) -> Result<String> {
     Ok(line)
 }
 
-async fn join_channels(client: &mut Client, channels: &[&str]) {
+async fn join_channels(client: &mut Client, channels: &Vec<String>) {
     for username in channels {
         match client.resolve_username(username).await {
             Ok(chat) => if let Some(chat) = chat {
@@ -236,7 +181,7 @@ async fn login(api_id: i32, api_hash: String) -> Client {
         params: Default::default(),
     };
 
-    let mut client = Client::connect(config).await.unwrap();
+    let client = Client::connect(config).await.unwrap();
     if !client.is_authorized().await.unwrap() {
         let phone = prompt("Введите номер телефона: ").unwrap();
         let token = client.request_login_code(&phone).await.unwrap();
@@ -272,16 +217,21 @@ async fn login(api_id: i32, api_hash: String) -> Client {
 async fn main() -> Result<()> {
     dotenv().ok();
 
-    let channels = vec!["anticopecahnnel", "alahalahalah"];
-    let target = "target_channel_sd";
+    let config = crate::config::Config::load_config().await;
 
-    let api_id = env::var("APP_ID").unwrap().parse::<i32>().unwrap();
-    let api_hash = env::var("API_HASH").unwrap();
+    let init_config = config.clone();
+    let api_id = init_config.main_config.app_id;
+    let api_hash = init_config.main_config.api_hash;
+    let channels = init_config.bot_settings.source_channels;
+    let target = init_config.bot_settings.target_channel;
+
+    println!("{:#?}", config);
+
     let mut client = login(api_id, api_hash).await;
-    let jj = join_channels(&mut client, &channels).await;
-
-    let er = monitor_and_forward(&mut client, target).await.unwrap();
-    println!("Err: {:?}", er);
+    join_channels(&mut client, &channels).await;
+    if let Err(e) = monitor_and_forward(&mut client, &target).await {
+        eprintln!("Error from monitor_and_forward: {:?}", e)
+    };
 
     Ok(())
 }
