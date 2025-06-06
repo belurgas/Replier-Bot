@@ -217,7 +217,7 @@ async fn login(api_id: i32, api_hash: String) -> Client {
 async fn main() -> Result<()> {
     dotenv().ok();
 
-    let config = crate::config::Config::load_config().await;
+    let config = crate::config::Config::load_config().await?;
 
     let init_config = config.clone();
     let api_id = init_config.main_config.app_id;
