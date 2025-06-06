@@ -37,7 +37,7 @@ pub struct BotSettings {
 impl Default for Config {
     fn default() -> Self {
         Self { main_config: MainConfig {
-            session_file_name: "sessions".to_string(),
+            session_file_name: "session".to_string(),
             bot_token: Some("token for your own telegram bot @BotFather".to_string()),
             ..Default::default()
         }, bot_settings: Default::default() }
