@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub main_config: MainConfig,
     pub bot_settings: BotSettings,
@@ -17,6 +17,7 @@ pub struct MainConfig {
     pub api_hash: String,
     pub app_title: String,
     pub app_shortname: String,
+    pub session_file_name: String,
     pub bot_token: Option<String>,
     pub users: Vec<User>,
 }
@@ -31,6 +32,16 @@ pub struct User {
 pub struct BotSettings {
     pub target_channel: String,
     pub source_channels: Vec<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { main_config: MainConfig {
+            session_file_name: "sessions".to_string(),
+            bot_token: Some("token for your own telegram bot @BotFather".to_string()),
+            ..Default::default()
+        }, bot_settings: Default::default() }
+    }
 }
 
 impl Config {
