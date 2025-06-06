@@ -11,6 +11,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 mod handlers;
 mod config;
 mod login;
+mod bot;
 
 async fn join_channels(client: &mut Client, channels: &Vec<String>) {
     for username in channels {
