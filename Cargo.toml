@@ -15,6 +15,7 @@ strip = true      # Удаляет символы (уменьшает разме
 [dependencies]
 dotenv = "0.15.0"
 grammers-client = "0.7.0"
+grammers-mtsender = "0.7.0"
 grammers-session = "0.7.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
