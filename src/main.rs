@@ -1,7 +1,7 @@
 use dotenv::dotenv;
 use grammers_client::types::{Channel, Chat, Downloadable, Media, Message};
 use grammers_client::{Client, InputMedia, InputMessage, Update};
-use tokio::time::interval;
+use tokio::time::{interval, sleep};
 use std::time::Duration;
 
 use crate::handlers::MediaGroupHandler;
@@ -13,18 +13,14 @@ mod config;
 mod login;
 mod bot;
 
-async fn join_channels(client: &mut Client, channels: &Vec<String>) {
+async fn join_channels(client: &mut Client, channels: &Vec<Channel>) {
     for username in channels {
-        match client.resolve_username(username).await {
-            Ok(chat) => if let Some(chat) = chat {
-                if let Err(e) = client.join_chat(chat).await {
-                    println!("Не удалось подписаться на {}: {:?}", username, e);
+        if let Err(e) = client.join_chat(username).await {
+                    println!("Не удалось подписаться на {}: {:?}", username.title(), e);
                 } else {
-                    println!("Подписался на {}", username);
+                    println!("Подписался на {}", username.title());
                 }
-            }
-            _ => println!("Не удалось найти канал: {}", username),
-        }
+        sleep(Duration::from_millis(1000)).await;
     }
 }
 
@@ -189,7 +185,10 @@ async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<V
     for name in channels {
         match client.resolve_username(&name).await {
             Ok(Some(chat)) => match chat {
-                Chat::Channel(ch) => channels_chat.push(ch),
+                Chat::Channel(ch) => {
+                    println!("Поучаем resolve: {}", ch.title());
+                    channels_chat.push(ch);
+                },
                 _ => {
                     // Ничего кроме каналов не добавляем
                 }
@@ -197,6 +196,7 @@ async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<V
             Ok(None) => println!("Не удалось найти чат: {}", name),
             Err(e) => println!("Не удалось получить чат канала: {}\nОшибка: {:?}", name, e),
         }
+        sleep(Duration::from_secs(1)).await;
     }
     Ok(channels_chat)
 }
@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
 
     let mut client = login::login(api_id, api_hash, &session_file_name).await;
     let chated = resolve_chnnels(&mut client, channels.clone()).await?;
-    join_channels(&mut client, &channels).await;
+    join_channels(&mut client, &chated).await;
     if let Err(e) = monitor_and_forward(&mut client, &target, chated).await {
         eprintln!("Error from monitor_and_forward: {:?}", e)
     };
