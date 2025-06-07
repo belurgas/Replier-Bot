@@ -157,23 +157,23 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Resul
                                 continue;
                             }
                             continue;
+                        } else {
+                            if let Some(s) = msg.media() {
+                                if let Some(group_id) = msg.grouped_id() {
+                                    group_handler.add_message(group_id, msg.clone()).await;
+                                    continue;
+                                } else {
+                                    send_media_group(client, target.clone(), vec![msg.clone()]).await?;
+                                    continue;
+                                } 
+                            } else if !msg.text().is_empty() {
+                                let mse = InputMessage::text(msg.text());
+                                client.send_message(target.clone(), mse).await?;
+                                continue;
+                            }
                         }
                     }
                     _ => {}
-                }
-
-                if let Some(s) = msg.media() {
-                    if let Some(group_id) = msg.grouped_id() {
-                        group_handler.add_message(group_id, msg.clone()).await;
-                        continue;
-                    } else {
-                        send_media_group(client, target.clone(), vec![msg.clone()]).await?;
-                        continue;
-                    } 
-                } else if !msg.text().is_empty() {
-                    let mse = InputMessage::text(msg.text());
-                    client.send_message(target.clone(), mse).await?;
-                    continue;
                 }
             }
             d => {}, 
