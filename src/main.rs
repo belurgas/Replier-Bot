@@ -35,41 +35,42 @@ async fn send_media_group(client: &mut Client, target_channel: Chat, messages: V
         match i.chat() {
             Chat::Channel(ch) => {
                 if let Some(media) = i.media() {
-                    if ch.raw.noforwards {
-                        if !i.text().is_empty() {
-                            let path = format!("./image_{}.jpg", idx);
-                            let down = Downloadable::Media(media);
-                            client.download_media(&down, &path).await?;
-                            sleep(Duration::from_millis(500)).await;
-                            let uploaded = client.upload_file(path).await?;
-                            sleep(Duration::from_millis(500)).await;
-                            client.send_message(target_channel, InputMessage::text(i.text()).photo(uploaded)).await?;
-                            return Ok(());
-                        }
-                        return Ok(());
-                    } else {    
-                        match client.send_message(target_channel.clone(), InputMessage::text(i.text()).copy_media(&media)).await {
-                            Ok(okd) => {
-                                // Получаем сообщение
-                            },
-                            Err(e) => {
-                                match e {
-                                    InvocationError::Rpc(r) => {
-                                        match r {
-                                            error => {
-                                                if error.name == "MEDIA_CAPTION_TOO_LONG".to_string() {
-                                                    println!("Описание слишком большое. Пересылаем");
-                                                    i.forward_to(target_channel.clone()).await?;
-                                                }
-                                            }
-                                        }
-                                    },
-                                    _ => {}
-                                }
+                    if let Some(grouped_id) = i.grouped_id() {
+                        if ch.raw.noforwards {
+                            if !i.text().is_empty() {
+                                let path = format!("./image_{}.jpg", idx);
+                                let down = Downloadable::Media(media);
+                                client.download_media(&down, &path).await?;
+                                sleep(Duration::from_millis(500)).await;
+                                let uploaded = client.upload_file(path).await?;
+                                sleep(Duration::from_millis(500)).await;
+                                client.send_message(target_channel, InputMessage::text(i.text()).photo(uploaded)).await?;
+                                return Ok(());
                             }
+                            return Ok(());
+                        } else {    
+                            i.forward_to(target_channel.clone()).await?;
+                            return Ok(())
+                            
                         }
-                        return Ok(())
-                        
+                    } else {
+                        if ch.raw.noforwards {
+                            if !i.text().is_empty() {
+                                let path = format!("./image_{}.jpg", idx);
+                                let down = Downloadable::Media(media);
+                                client.download_media(&down, &path).await?;
+                                sleep(Duration::from_millis(500)).await;
+                                let uploaded = client.upload_file(path).await?;
+                                sleep(Duration::from_millis(500)).await;
+                                client.send_message(target_channel, InputMessage::text(i.text()).photo(uploaded)).await?;
+                                return Ok(());
+                            }
+                            return Ok(());
+                        } else {    
+                            i.forward_to(target_channel.clone()).await?;
+                            return Ok(())
+                            
+                        }
                     }
                 }
             }
@@ -91,6 +92,27 @@ async fn send_media_group(client: &mut Client, target_channel: Chat, messages: V
         }
     };
 }
+
+// match client.send_message(target_channel.clone(), InputMessage::text(i.text()).copy_media(&media)).await {
+                        //     Ok(okd) => {
+                        //         // Получаем сообщение
+                        //     },
+                        //     Err(e) => {
+                        //         match e {
+                        //             InvocationError::Rpc(r) => {
+                        //                 match r {
+                        //                     error => {
+                        //                         if error.name == "MEDIA_CAPTION_TOO_LONG".to_string() {
+                        //                             println!("Описание слишком большое. Пересылаем");
+                        //                             i.forward_to(target_channel.clone()).await?;
+                        //                         }
+                        //                     }
+                        //                 }
+                        //             },
+                        //             _ => {}
+                        //         }
+                        //     }
+                        // }
 
 async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: Vec<Channel>) -> Result<()> {
     let target = match client.resolve_username(target_channel).await? {
