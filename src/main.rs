@@ -1,5 +1,5 @@
 use dotenv::dotenv;
-use grammers_client::types::{Chat, Downloadable, Media, Message};
+use grammers_client::types::{Channel, Chat, Downloadable, Media, Message};
 use grammers_client::{Client, InputMedia, InputMessage, Update};
 use tokio::time::interval;
 use std::time::Duration;
@@ -76,7 +76,7 @@ async fn send_media_group(client: &mut Client, target_channel: Chat, messages: V
     };
 }
 
-async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Result<()> {
+async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: Vec<Channel>) -> Result<()> {
     let target = match client.resolve_username(target_channel).await? {
         Some(t) => t,
         None => return Err("Target channel not found".into()),
@@ -111,7 +111,8 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Resul
 
                 match msg.chat() {
                     Chat::Channel(ch) => {
-                        if ch.raw.noforwards {
+                        if is_chat_in_list(&ch, &chated) {
+                            if ch.raw.noforwards {
                             println!("Группа с запретом на копирование, где альбом сгрупирован");
                             if let Some(group_id) = msg.grouped_id() {
                                 println!("Группа, собираем!");
@@ -171,6 +172,7 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Resul
                                 client.send_message(target.clone(), mse).await?;
                                 continue;
                             }
+                        };
                         }
                     }
                     _ => {}
@@ -181,6 +183,27 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str) -> Resul
     }
 }
 
+async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<Vec<Channel>> {
+    let mut channels_chat = Vec::new();
+
+    for name in channels {
+        match client.resolve_username(&name).await {
+            Ok(Some(chat)) => match chat {
+                Chat::Channel(ch) => channels_chat.push(ch),
+                _ => {
+                    // Ничего кроме каналов не добавляем
+                }
+            },
+            Ok(None) => println!("Не удалось найти чат: {}", name),
+            Err(e) => println!("Не удалось получить чат канала: {}\nОшибка: {:?}", name, e),
+        }
+    }
+    Ok(channels_chat)
+}
+
+fn is_chat_in_list(chat: &Channel, channels: &Vec<Channel>) -> bool {
+    channels.iter().any(|c| c.id() == chat.id())
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -191,16 +214,17 @@ async fn main() -> Result<()> {
     let init_config = config.clone();
     let api_id = init_config.main_config.app_id;
     let api_hash = init_config.main_config.api_hash;
-    let channels = init_config.bot_settings.source_channels;
     let target = init_config.bot_settings.target_channel;
     let session_file_name = init_config.main_config.session_file_name;
     let session_file_name = format!("{}.session", session_file_name);
+    let channels = init_config.bot_settings.source_channels;
 
     println!("{:#?}", config);
 
     let mut client = login::login(api_id, api_hash, &session_file_name).await;
+    let chated = resolve_chnnels(&mut client, channels.clone()).await?;
     join_channels(&mut client, &channels).await;
-    if let Err(e) = monitor_and_forward(&mut client, &target).await {
+    if let Err(e) = monitor_and_forward(&mut client, &target, chated).await {
         eprintln!("Error from monitor_and_forward: {:?}", e)
     };
 
