@@ -18,6 +18,7 @@ pub struct MainConfig {
     pub app_title: String,
     pub app_shortname: String,
     pub session_file_name: String,
+    pub mistral_token: String,
     pub bot_token: Option<String>,
     pub users: Vec<User>,
 }
