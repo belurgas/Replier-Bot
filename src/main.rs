@@ -3,10 +3,11 @@ use grammers_client::grammers_tl_types::enums::RpcError as rpc;
 use grammers_client::types::{Channel, Chat, Downloadable, Media, Message};
 use grammers_client::{Client, InputMedia, InputMessage, Update};
 use grammers_mtsender::RpcError;
+use serde::Deserialize;
 use tokio::time::{interval, sleep};
 use std::time::Duration;
 
-use crate::handlers::MediaGroupHandler;
+use crate::handlers::{generate, MediaGroupHandler};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -14,6 +15,13 @@ mod handlers;
 mod config;
 mod login;
 mod bot;
+mod mistral;
+
+#[derive(Debug, Deserialize)]
+struct AproveData {
+    status: String,
+    text: String,
+}
 
 async fn join_channels(client: &mut Client, channels: &Vec<Channel>) {
     for username in channels {
@@ -114,7 +122,7 @@ async fn send_media_group(client: &mut Client, target_channel: Chat, messages: V
                         //     }
                         // }
 
-async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: Vec<Channel>) -> Result<()> {
+async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: Vec<Channel>, mistral_token: &str) -> Result<()> {
     let target = match client.resolve_username(target_channel).await? {
         Some(t) => t,
         None => return Err("Target channel not found".into()),
@@ -150,6 +158,22 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
                 match msg.chat() {
                     Chat::Channel(ch) => {
                         if is_chat_in_list(&ch, &chated) {
+                            let resp = generate(msg.text(), mistral_token).await?;
+                            if let Some(status_message) = resp.choices.first() {
+                                let message = status_message.message.content.clone();
+                                // let aga = message.lines()
+                                //     .filter(|line| line.trim().starts_with('{'))
+                                //     .collect::<Vec<&str>>()
+                                //     .join("");
+                                // println!("Aga: {}", aga);
+                                let jj: AproveData = serde_json::from_str(&message)?;
+                                // println!("Aprove: {:#?}", jj);
+
+                                if jj.status != "релевантный" {
+                                    continue;
+                                }
+                            }
+
                             if ch.raw.noforwards {
                                 println!("Группа с запретом на копирование, где альбом сгрупирован");
                                 if let Some(group_id) = msg.grouped_id() {
@@ -263,6 +287,7 @@ async fn main() -> Result<()> {
     let session_file_name = init_config.main_config.session_file_name;
     let session_file_name = format!("{}.session", session_file_name);
     let channels = init_config.bot_settings.source_channels;
+    let mistral_token = init_config.main_config.mistral_token;
 
     println!("{:#?}", config);
 
@@ -270,7 +295,7 @@ async fn main() -> Result<()> {
     let chated = resolve_chnnels(&mut client, channels.clone()).await?;
     println!("Каналов найдено: {}", chated.len());
     // join_channels(&mut client, &chated).await;
-    if let Err(e) = monitor_and_forward(&mut client, &target, chated).await {
+    if let Err(e) = monitor_and_forward(&mut client, &target, chated, &mistral_token).await {
         eprintln!("Error from monitor_and_forward: {:?}", e)
     };
 
