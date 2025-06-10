@@ -1,6 +1,6 @@
 use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 
-use grammers_client::{types::Message, InputMedia};
+use grammers_client::{InputMedia};
 use tokio::{sync::Mutex, time::Instant};
 
 use crate::mistral::{MistralClient, MistralResponse};
