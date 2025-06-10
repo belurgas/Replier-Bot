@@ -1,15 +1,15 @@
 use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 
-use grammers_client::types::Message;
+use grammers_client::{types::Message, InputMedia};
 use tokio::{sync::Mutex, time::Instant};
 
 use crate::mistral::{MistralClient, MistralResponse};
 
 /// Структура для обработки Media
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MediaGroupHandler {
     /// Мутекс HashMap хранящий grouped_id и вектор сообщений
-    pub groups: Arc<Mutex<HashMap<i64, Vec<Message>>>>,
+    pub groups: Arc<Mutex<HashMap<i64, Vec<InputMedia>>>>,
     /// Метка. Когда последгий раз был добавлено Media. 
     /// Т.к альбом получается в client.next_update() последовательными обновлениями с минимальными задержками
     pub last_seen: Arc<Mutex<HashMap<i64, Instant>>>,
@@ -29,16 +29,16 @@ impl MediaGroupHandler {
 
     /// Добавляем/Создаём HashMap альбома GroupedID
     /// Фиксируем last_seen
-    pub async fn add_message(&self, group_id: i64, message: Message) {
+    pub async fn add_media(&self, group_id: i64, media: InputMedia) {
         let mut groups = self.groups.lock().await;
         let mut last_seen = self.last_seen.lock().await;
 
-        groups.entry(group_id).or_default().push(message);
+        groups.entry(group_id).or_default().push(media);
         last_seen.insert(group_id, Instant::now());
     }
 
     /// Получаем все группы, у которых вышел timeout
-    pub async fn get_expired_groups(&self) -> Vec<(i64, Vec<Message>)> {
+    pub async fn get_expired_groups(&self) -> Vec<(i64, Vec<InputMedia>)> {
         let now = Instant::now();
         let mut expired = Vec::new();
 
@@ -47,8 +47,8 @@ impl MediaGroupHandler {
 
         last_seen.retain(|&group_id, &mut seen| {
             if now.duration_since(seen) >= self.timeout {
-                if let Some(messages) = groups.remove(&group_id) {
-                    expired.push((group_id, messages));
+                if let Some(media) = groups.remove(&group_id) {
+                    expired.push((group_id, media));
                 }
                 false
             } else {
@@ -76,7 +76,7 @@ pub async fn generate(text: &str, mistral_token: &str) -> Result<MistralResponse
 4. Если текст похож на новость или содержит актуальную информацию, отметь его как "релевантный".
 5. Если текст превышает 1000 символов, сделай краткий пересказ, используя более сжатый и понятный язык, а также добавь эмодзи для улучшения восприятия.
 6. Следуй стоп словам, если видишь их или похожие по тематике, то отмечай его как "не релевантны"
-Список ключевых слов: ИИ, Нейросети, нейоронные сети, утилита, утилиты, сервис, модель, OpenAI, Google, Mistral, Gemini, ChatGPT, GPT, DeepSeek, Grok, Elon Musk, технологии.
+Список ключевых слов: ИИ, Нейросети, нейоронные сети, утилита, утилиты, сервис, модель, OpenAI, Google, Mistral, Gemini, ChatGPT, GPT, DeepSeek, Grok, Elon Musk, технологии, мемы, 
 Стоп слова: политика, война, пропоганда, погода, новости не касаюшиеся ИИ.
 Формат ответа строго такой:
 {
@@ -84,7 +84,7 @@ pub async fn generate(text: &str, mistral_token: &str) -> Result<MistralResponse
     "text": "оригинальный текст или сжатый пересказ"
 }
 
-ВАЖНО: Ответ должен начинаться с "{" и заканчиваться на "}". НИ В КОЕМ СЛУЧАЕ НЕ ОТВЕЧАЙ СВОЙ ОТВЕТ С ФОРМАТИРОВАНИЕМ. Это системный ответ, который пользователь не видит.
+ВАЖНО: Ответ должен начинаться с "{" и заканчиваться на "}". НИ В КОЕМ СЛУЧАЕ НЕ ОТВЕЧАЙ С ФОРМАТИРОВАНИЕМ. Это системный ответ, который пользователь не видит.
 
 Пример входного текста: "Скидка 50% на все товары! Посетите наш сайт: http://example.com"
 "#;
