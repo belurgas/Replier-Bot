@@ -19,13 +19,13 @@ struct MistralRequest {
 
 #[derive(Deserialize, Default, Debug)]
 pub struct MistralResponse {
-    pub _id: String,
+    pub id: String,
     pub choices: Vec<Choice>,
 }
 
 #[derive(Deserialize, Default, Debug)]
 pub struct Choice {
-    pub _index: i32,
+    pub index: i32,
     pub message: Message,
 }
 
