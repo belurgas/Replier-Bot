@@ -4,6 +4,7 @@ use grammers_client::types::{Channel, Chat, Downloadable, Media};
 use grammers_client::{Client, InputMedia, InputMessage, InvocationError, Update};
 use serde::Deserialize;
 use tokio::time::{interval, sleep};
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::handlers::{generate, MediaGroupHandler};
@@ -63,6 +64,9 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
         }
     });
 
+
+    let mut none_relevant_group: HashSet<i64> = HashSet::new();
+
     loop {
         let upd = client.next_update().await.unwrap();
         match upd {
@@ -73,14 +77,23 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
                         if is_chat_in_list(&ch, &chated) {
                             // Anticopy rules
                             // download only first message
+                            if let Some(group_id) = msg.grouped_id() {
+                                if none_relevant_group.contains(&group_id) {
+                                    continue;
+                                }
+                            }
                             if !msg.text().is_empty() {
                                 let msg_in_cahrs = msg.text().chars().count();                                
                                 let gend = generate(msg.text(), mistral_token).await?;
                                 if let Some(status_message) = gend.choices.first() {
-                                    let message = status_message.message.content.clone();
+                                    let message = status_message.message.content.clone();                              
                                     match serde_json::from_str::<AproveData>(&message) {
                                         Ok(jj) => {
                                             if jj.status != "релевантный" {
+                                                if let Some(group_id) = msg.grouped_id() {
+                                                    none_relevant_group.clear();
+                                                    none_relevant_group.insert(group_id);
+                                                }
                                                 continue;
                                             }
 
