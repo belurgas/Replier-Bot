@@ -1,8 +1,7 @@
 use dotenv::dotenv;
-use grammers_client::grammers_tl_types::enums::RpcError as rpc;
-use grammers_client::types::{Channel, Chat, Downloadable, Media, Message};
-use grammers_client::{Client, InputMedia, InputMessage, Update};
-use grammers_mtsender::RpcError;
+
+use grammers_client::types::{Channel, Chat, Downloadable, Media};
+use grammers_client::{Client, InputMedia, InputMessage, InvocationError, Update};
 use serde::Deserialize;
 use tokio::time::{interval, sleep};
 use std::time::Duration;
@@ -23,6 +22,7 @@ struct AproveData {
     text: String,
 }
 
+
 async fn join_channels(client: &mut Client, channels: &Vec<Channel>) {
     for username in channels {
         if let Err(e) = client.join_chat(username).await {
@@ -34,93 +34,12 @@ async fn join_channels(client: &mut Client, channels: &Vec<Channel>) {
     }
 }
 
-async fn send_media_group(client: &mut Client, target_channel: Chat, messages: Vec<Message>) -> Result<()> {
-    
-    let mut album: Vec<InputMedia> = Vec::with_capacity(messages.len());
-
-    // Отправляем совокупные медиа
-    for (idx, i) in messages.iter().enumerate() {
-        match i.chat() {
-            Chat::Channel(ch) => {
-                if let Some(media) = i.media() {
-                    if let Some(grouped_id) = i.grouped_id() {
-                        if ch.raw.noforwards {
-                            if !i.text().is_empty() {
-                                let path = format!("./image_{}.jpg", idx);
-                                let down = Downloadable::Media(media);
-                                client.download_media(&down, &path).await?;
-                                sleep(Duration::from_millis(500)).await;
-                                let uploaded = client.upload_file(path).await?;
-                                sleep(Duration::from_millis(500)).await;
-                                client.send_message(target_channel, InputMessage::text(i.text()).photo(uploaded)).await?;
-                                return Ok(());
-                            }
-                            return Ok(());
-                        } else {    
-                            i.forward_to(target_channel.clone()).await?;
-                            return Ok(())
-                            
-                        }
-                    } else {
-                        if ch.raw.noforwards {
-                            if !i.text().is_empty() {
-                                let path = format!("./image_{}.jpg", idx);
-                                let down = Downloadable::Media(media);
-                                client.download_media(&down, &path).await?;
-                                sleep(Duration::from_millis(500)).await;
-                                let uploaded = client.upload_file(path).await?;
-                                sleep(Duration::from_millis(500)).await;
-                                client.send_message(target_channel, InputMessage::text(i.text()).photo(uploaded)).await?;
-                                return Ok(());
-                            }
-                            return Ok(());
-                        } else {    
-                            i.forward_to(target_channel.clone()).await?;
-                            return Ok(())
-                            
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    match album.len() {
-        0 => return Ok(()),
-        1 => {
-            client.send_album(target_channel, vec![album.remove(0)]).await?;
-            return Ok(());
-        }
-        _ => {
-            if let Err(e) = client.send_album(target_channel, album).await {
-                eprintln!("Ошибка блять: {:?}", e);
-            }
-            return Ok(());
-        }
-    };
+#[derive(Debug, Default)]                        
+enum MediaType {
+    #[default]
+    None,
+    Photo,
 }
-
-// match client.send_message(target_channel.clone(), InputMessage::text(i.text()).copy_media(&media)).await {
-                        //     Ok(okd) => {
-                        //         // Получаем сообщение
-                        //     },
-                        //     Err(e) => {
-                        //         match e {
-                        //             InvocationError::Rpc(r) => {
-                        //                 match r {
-                        //                     error => {
-                        //                         if error.name == "MEDIA_CAPTION_TOO_LONG".to_string() {
-                        //                             println!("Описание слишком большое. Пересылаем");
-                        //                             i.forward_to(target_channel.clone()).await?;
-                        //                         }
-                        //                     }
-                        //                 }
-                        //             },
-                        //             _ => {}
-                        //         }
-                        //     }
-                        // }
 
 async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: Vec<Channel>, mistral_token: &str) -> Result<()> {
     let target = match client.resolve_username(target_channel).await? {
@@ -130,14 +49,14 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
 
     let group_handler = MediaGroupHandler::new(Duration::from_secs(1)).await;
     let handler_clone = group_handler.clone();
-    let mut client_clone = client.clone();
+    let client_clone = client.clone();
     let target_clone = target.clone();
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
             for (_, messages) in handler_clone.get_expired_groups().await {
-                if let Err(e) = send_media_group(&mut client_clone, target_clone.clone(), messages).await {
+                if let Err(e) = client_clone.send_album(target_clone.clone(), messages).await {
                     eprintln!("Error seending media group: {}", e);
                 }
             }
@@ -147,100 +66,125 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
     loop {
         let upd = client.next_update().await.unwrap();
         match upd {
-            Update::NewMessage(msg) => {
-                if let Some(username) = msg.chat().username() {
-                    if username == target_channel {
-                        // Значит получили обновление из таргет канала
-                        continue;
-                    }
-                }
-
+            Update::NewMessage(msg) if !msg.outgoing() => {
                 match msg.chat() {
                     Chat::Channel(ch) => {
+                        println!("Новое сообщение");
                         if is_chat_in_list(&ch, &chated) {
-                            let resp = generate(msg.text(), mistral_token).await?;
-                            if let Some(status_message) = resp.choices.first() {
-                                let message = status_message.message.content.clone();
-                                // let aga = message.lines()
-                                //     .filter(|line| line.trim().starts_with('{'))
-                                //     .collect::<Vec<&str>>()
-                                //     .join("");
-                                // println!("Aga: {}", aga);
-                                let jj: AproveData = serde_json::from_str(&message)?;
-                                // println!("Aprove: {:#?}", jj);
+                            // Anticopy rules
+                            // download only first message
+                            if !msg.text().is_empty() {
+                                let msg_in_cahrs = msg.text().chars().count();                                
+                                let gend = generate(msg.text(), mistral_token).await?;
+                                if let Some(status_message) = gend.choices.first() {
+                                    let message = status_message.message.content.clone();
+                                    match serde_json::from_str::<AproveData>(&message) {
+                                        Ok(jj) => {
+                                            if jj.status != "релевантный" {
+                                                continue;
+                                            }
 
-                                if jj.status != "релевантный" {
-                                    continue;
+                                            if msg_in_cahrs > 1000 {
+                                                let message = jj.text;
+                                                println!("Текст который должен быть: {}", message);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("ошибка распаршивания json: {:?}", e);
+                                        }
+                                    }
                                 }
+                                println!("Обработку прошли.");
                             }
-
                             if ch.raw.noforwards {
-                                println!("Группа с запретом на копирование, где альбом сгрупирован");
-                                if let Some(group_id) = msg.grouped_id() {
-                                    println!("Группа, собираем!");
-                                    group_handler.add_message(group_id, msg.clone()).await;
+                                if let Some(media) = msg.media() {
+                                    let mut path = String::new();
+                                    let mut media_type = MediaType::None;
+
+                                    match media.clone() {
+                                        Media::Photo(_) => {
+                                            path = "./image.jpg".to_string();
+                                            media_type = MediaType::Photo
+                                        },
+                                        Media::Document(doc) => {
+                                            if let Some(mime) = doc.mime_type() {
+                                                if let Some(mime_format) = mime.split('/').last() {
+                                                    path = format!("./doc.{}", mime_format);
+                                                }
+                                            } else {
+                                                println!("No mime type: {}", doc.name());
+                                            }
+                                        }
+                                        _ => {
+                                            // Nothin do with another media
+                                        }
+                                    };
+
+                                    let down = Downloadable::Media(media.clone());
+                                    client.download_media(&down, &path).await?;
+
+                                    let upload = client.upload_file(&path).await?;
                                     
-                                    
-                                } else {
-                                    println!("Группа с запретом, где одно медиа");
-                                    if let Some(media) = msg.media() {
-                                        let mut path = String::new();
-                                        match media.clone() {
-                                            Media::Document(doc) => {
-                                                // Получаем расширение документа
-                                                if let Some(mime) = doc.mime_type() {
-                                                    println!("doc: {}", mime);
-                                                    path = format!("./document.{}", mime.split('/').last().unwrap());
-                                                    let down = Downloadable::Media(media.clone());
-                                                    client.download_media(&down, &path).await?;
-                                                    sleep(Duration::from_millis(500)).await;
-                                                    let uploaded = client.upload_file(&path).await?;
-                                                    sleep(Duration::from_millis(500)).await;
-                                                    client.send_message(target.clone(), InputMessage::text(msg.text()).document(uploaded)).await?;
+                                    if !msg.text().is_empty() {
+                                        let text = msg.text();
+                                        match media_type {
+                                            MediaType::Photo => {
+                                                if let Err(e) = client.send_message(target.clone(), InputMessage::text(text).photo(upload)).await {
+                                                    match e {
+                                                        InvocationError::Rpc(rpc) => {
+                                                            println!("Ошибка noforward media send: {:?}", rpc);
+                                                        }
+                                                        _ => {}
+                                                    }
                                                 }
                                             }
-                                            Media::Photo(phot) => {
-                                                path = "./image.jpg".to_string();
-                                                let down = Downloadable::Media(media.clone());
-                                                client.download_media(&down, &path).await?;
-                                                sleep(Duration::from_millis(500)).await;
-                                                let uploaded = client.upload_file(&path).await?;
-                                                sleep(Duration::from_millis(500)).await;
-                                                client.send_message(target.clone(), InputMessage::text(msg.text()).photo(uploaded)).await?;
-                                            },
-                                            d => {
-                                                println!("Media: {:#?}", d);
+                                            _ => {                                                                                                           
+                                                client.send_message(target.clone(), InputMessage::text(text).document(upload)).await?;
                                             }
                                         }
                                     } else {
-                                        client.send_message(target.clone(), InputMessage::text(msg.text())).await?;
+                                        if let None = msg.grouped_id() {
+                                            // Only message without text
+                                            client.send_message(target.clone(), InputMessage::default().document(upload)).await?;   
+                                        }
                                     }
-                                    continue;
+                                } else {
+                                    // No media, just send text
+                                    if !msg.text().is_empty() {
+                                        let text = msg.text();
+                                        client.send_message(target.clone(), InputMessage::text(text)).await?;
+                                    }
                                 }
-                                continue;
                             } else {
-                                if let Some(s) = msg.media() {
-                                    if let Some(group_id) = msg.grouped_id() {
-                                        group_handler.add_message(group_id, msg.clone()).await;
-                                        continue;
-                                    } else {
-                                        send_media_group(client, target.clone(), vec![msg.clone()]).await?;
-                                        continue;
-                                    } 
-                                } else if !msg.text().is_empty() {
-                                    let mse = InputMessage::text(msg.text());
-                                    client.send_message(target.clone(), mse).await?;
-                                    continue;
+                                if let Some(grouped_id) = msg.grouped_id() {
+                                    if let Some(media) = msg.media() {
+                                        let caption = msg.text();
+                                        let media_data = InputMedia::caption(caption).copy_media(&media);
+                                        group_handler.add_media(grouped_id, media_data).await;
+                                        
+                                    }
+                                } else {
+                                    msg.forward_to(&target).await?;
                                 }
-                            };
+                            }
                         } else {
-                            println!("Канал не в списке");
+                            println!("Нету: {:?}", &ch.username());
                         }
                     }
-                    _ => {}
+                    Chat::Group(gr) => {
+                        println!("Получили сообщение из: {}", gr.title());
+                    }
+                    d => {
+                        println!("Что нахуй: {:?}", d.username());
+                    }
+                }
+                if msg.post() {
+                    println!("AHAHAHAHAHAHAHAH: {}", msg.text());
                 }
             }
-            d => {}, 
+            _d => {
+                println!("Another update",);
+            }, 
         }
     }
 }
@@ -249,20 +193,50 @@ async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<V
     let mut channels_chat = Vec::new();
 
     for name in channels {
-        match client.resolve_username(&name).await {
-            Ok(Some(chat)) => match chat {
-                Chat::Channel(ch) => {
-                    println!("Поучаем resolve: {}", ch.title());
-                    channels_chat.push(ch);
+        let mut retry_count: u32= 0;
+        loop {
+            match client.resolve_username(&name).await {
+                Ok(Some(chat)) => match chat {
+                    Chat::Channel(ch) => {
+                        println!("Поучаем resolve: {}", ch.title());
+                        channels_chat.push(ch.clone());
+                        break;
+                    },
+                    _ => {
+                        // Ничего кроме каналов не добавляем
+                    }
                 },
-                _ => {
-                    // Ничего кроме каналов не добавляем
-                }
-            },
-            Ok(None) => println!("Не удалось найти чат: {}", name),
-            Err(e) => println!("Не удалось получить чат канала: {}\nОшибка: {:?}", name, e),
+                Ok(None) => {    
+                    println!("Не удалось найти чат: {}", name);
+                    break;
+                },
+                Err(e) => {
+                    match e {
+                        InvocationError::Rpc(rpc) => {
+                            if rpc.name == "FLOOD_WAIT" {
+                                if let Some(_time_to_wait) = rpc.value {
+                                    let time_to_wait = rpc.value.unwrap_or(5); // по умолчанию 5 секунд
+                                    println!("Получен FLOOD_WAIT, ждём {} секунд перед повтором...", time_to_wait);
+                                    sleep(Duration::from_secs((time_to_wait + 1).into())).await;
+
+                                    retry_count += 1;
+                                    if retry_count > 3 {
+                                        println!("Слишком много попыток для {}: {:?}", name, rpc);
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        err => {
+                            println!("Непонятная ошибка: {:?}", err);
+                            break;
+                        }
+                    }
+                },
+            }
         }
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_millis(100)).await;
     }
     Ok(channels_chat)
 }
@@ -289,12 +263,15 @@ async fn main() -> Result<()> {
     let channels = init_config.bot_settings.source_channels;
     let mistral_token = init_config.main_config.mistral_token;
 
-    println!("{:#?}", config);
+    // println!("{:#?}", config);
 
     let mut client = login::login(api_id, api_hash, &session_file_name).await;
+    let me = client.get_me().await.unwrap();
+    println!(
+       "Username: {}", me.username().unwrap_or("No username"));
     let chated = resolve_chnnels(&mut client, channels.clone()).await?;
     println!("Каналов найдено: {}", chated.len());
-    // join_channels(&mut client, &chated).await;
+    join_channels(&mut client, &chated).await;
     if let Err(e) = monitor_and_forward(&mut client, &target, chated, &mistral_token).await {
         eprintln!("Error from monitor_and_forward: {:?}", e)
     };
