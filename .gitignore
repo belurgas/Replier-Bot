@@ -1,0 +1,7 @@
+/target
+*.session
+*.json
+*.lock
+target/*
+src/mainds.rs
+src/database.rs
