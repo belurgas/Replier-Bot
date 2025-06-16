@@ -1,4 +1,5 @@
 /target
+/src/mistral.rs
 .env
 *.session
 *.jpg
