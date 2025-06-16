@@ -274,7 +274,7 @@ async fn main() -> Result<()> {
     let session_file_name = init_config.main_config.session_file_name;
     let session_file_name = format!("{}.session", session_file_name);
     let channels = init_config.bot_settings.source_channels;
-    let mistral_token = init_config.main_config.mistral_token;
+    // let mistral_token = init_config.main_config.mistral_token;
 
     // println!("{:#?}", config);
 
@@ -285,7 +285,7 @@ async fn main() -> Result<()> {
     let chated = resolve_chnnels(&mut client, channels.clone()).await?;
     println!("Каналов найдено: {}", chated.len());
     join_channels(&mut client, &chated).await;
-    if let Err(e) = monitor_and_forward(&mut client, &target, chated, &mistral_token).await {
+    if let Err(e) = monitor_and_forward(&mut client, &target, chated, "d").await {
         eprintln!("Error from monitor_and_forward: {:?}", e)
     };
 
