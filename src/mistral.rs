@@ -63,9 +63,10 @@ impl MistralClient {
             messages,
         };
 
+        let token = "29DAkIiKLknaPju4xFeghAbKpr5so1CC";
         let response = self.client
             .post(&self.api_url)
-            .bearer_auth(mistral_token)
+            .bearer_auth(token)
             .json(&request_body)
             .send()
             .await?;
