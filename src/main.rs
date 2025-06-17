@@ -69,10 +69,10 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
 
     let mut none_relevant_group: HashSet<i64> = HashSet::new();
     client.sync_update_state();
+    log_info!("Sync state");
 
     loop {
         let upd = client.next_update().await.unwrap();
-        log_info!("Sync state");
         match upd {
             Update::NewMessage(msg) if !msg.outgoing() => {
                 match msg.chat() {
