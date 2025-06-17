@@ -71,6 +71,8 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
     client.sync_update_state();
     log_info!("Sync state");
 
+    
+
     loop {
         let upd = client.next_update().await.unwrap();
         match upd {
