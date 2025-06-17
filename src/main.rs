@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::handlers::{generate, MediaGroupHandler};
+use crate::logging::logger::setup_logger;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -16,6 +17,7 @@ mod config;
 mod login;
 mod bot;
 mod mistral;
+mod logging;
 
 #[derive(Debug, Deserialize)]
 struct AproveData {
@@ -27,9 +29,9 @@ struct AproveData {
 async fn join_channels(client: &mut Client, channels: &Vec<Channel>) {
     for username in channels {
         if let Err(e) = client.join_chat(username).await {
-                    println!("Не удалось подписаться на {}: {:?}", username.title(), e);
+                    log_error!("could not subscribe to {}: {:?}", username.title(), e);
                 } else {
-                    println!("Подписался на {}", username.title());
+                    log_info!("Subscribed to {}", username.title());
                 }
         sleep(Duration::from_millis(1500)).await;
     }
@@ -58,7 +60,7 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
             interval.tick().await;
             for (_, messages) in handler_clone.get_expired_groups().await {
                 if let Err(e) = client_clone.send_album(target_clone.clone(), messages).await {
-                    eprintln!("Error seending media group: {}", e);
+                    log_error!("Error seending media group: {}", e);
                 }
             }
         }
@@ -69,11 +71,13 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
 
     loop {
         let upd = client.next_update().await.unwrap();
+        client.sync_update_state();
+        log_info!("Sync state");
         match upd {
             Update::NewMessage(msg) if !msg.outgoing() => {
                 match msg.chat() {
                     Chat::Channel(ch) => {
-                        println!("Новое сообщение");
+                        log_info!("New message");
                         if is_chat_in_list(&ch, &chated) {
                             // Anticopy rules
                             // download only first message
@@ -90,24 +94,27 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
                                     match serde_json::from_str::<AproveData>(&message) {
                                         Ok(jj) => {
                                             if jj.status != "релевантный" {
+                                                log_info!("No relevante message");
                                                 if let Some(group_id) = msg.grouped_id() {
                                                     none_relevant_group.clear();
                                                     none_relevant_group.insert(group_id);
                                                 }
                                                 continue;
+                                            } else {
+                                                log_info!("Relevante message");
                                             }
 
                                             if msg_in_cahrs > 1000 {
                                                 let message = jj.text;
-                                                println!("Текст который должен быть: {}", message);
+                                                log_info!("The text that should be: {}", message);
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("ошибка распаршивания json: {:?}", e);
+                                            log_error!("Json parsing error: {:?}", e);
                                         }
                                     }
                                 }
-                                println!("Обработку прошли.");
+                                log_info!("The tratment was successful.");
                             }
                             if ch.raw.noforwards {
                                 if let Some(media) = msg.media() {
@@ -125,7 +132,7 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
                                                     path = format!("./doc.{}", mime_format);
                                                 }
                                             } else {
-                                                println!("No mime type: {}", doc.name());
+                                                log_warn!("None mime type: {}", doc.name());
                                             }
                                         }
                                         _ => {
@@ -145,7 +152,7 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
                                                 if let Err(e) = client.send_message(target.clone(), InputMessage::text(text).photo(upload)).await {
                                                     match e {
                                                         InvocationError::Rpc(rpc) => {
-                                                            println!("Ошибка noforward media send: {:?}", rpc);
+                                                            log_error!("Error noforward media send: {:?}", rpc);
                                                         }
                                                         _ => {}
                                                     }
@@ -180,24 +187,17 @@ async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: 
                                     msg.forward_to(&target).await?;
                                 }
                             }
-                        } else {
-                            println!("Нету: {:?}", &ch.username());
                         }
                     }
                     Chat::Group(gr) => {
-                        println!("Получили сообщение из: {}", gr.title());
+                        log_debug!("Message recv from: {}", gr.title());
                     }
                     d => {
-                        println!("Что нахуй: {:?}", d.username());
+                        log_debug!("Unhandled type of chat: {:?}", d.username());
                     }
                 }
-                if msg.post() {
-                    println!("AHAHAHAHAHAHAHAH: {}", msg.text());
-                }
             }
-            _d => {
-                println!("Another update",);
-            }, 
+            _ => {} 
         }
     }
 }
@@ -211,7 +211,7 @@ async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<V
             match client.resolve_username(&name).await {
                 Ok(Some(chat)) => match chat {
                     Chat::Channel(ch) => {
-                        println!("Поучаем resolve: {}", ch.title());
+                        log_info!("Catch resolve: {}", ch.title());
                         channels_chat.push(ch.clone());
                         break;
                     },
@@ -220,7 +220,7 @@ async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<V
                     }
                 },
                 Ok(None) => {    
-                    println!("Не удалось найти чат: {}", name);
+                    log_warn!("Could not find the chat: {}", name);
                     break;
                 },
                 Err(e) => {
@@ -229,12 +229,12 @@ async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<V
                             if rpc.name == "FLOOD_WAIT" {
                                 if let Some(_time_to_wait) = rpc.value {
                                     let time_to_wait = rpc.value.unwrap_or(5); // по умолчанию 5 секунд
-                                    println!("Получен FLOOD_WAIT, ждём {} секунд перед повтором...", time_to_wait);
+                                    log_info!("Catch FLOOD_WAIT, wait for {} seconds after retry...", time_to_wait);
                                     sleep(Duration::from_secs((time_to_wait + 1).into())).await;
 
                                     retry_count += 1;
                                     if retry_count > 3 {
-                                        println!("Слишком много попыток для {}: {:?}", name, rpc);
+                                        log_error!("Too mach retries for {}: {:?}", name, rpc);
                                         break;
                                     }
                                     continue;
@@ -242,7 +242,7 @@ async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<V
                             }
                         }
                         err => {
-                            println!("Непонятная ошибка: {:?}", err);
+                            log_error!("Unknown error: {:?}", err);
                             break;
                         }
                     }
@@ -265,8 +265,8 @@ fn is_chat_in_list(chat: &Channel, channels: &Vec<Channel>) -> bool {
 async fn main() -> Result<()> {
     dotenv().ok();
 
+    setup_logger().expect("Could not setting up logger");
     let config = crate::config::Config::load_config().await?;
-
     let init_config = config.clone();
     let api_id = init_config.main_config.app_id;
     let api_hash = init_config.main_config.api_hash;
@@ -276,17 +276,15 @@ async fn main() -> Result<()> {
     let channels = init_config.bot_settings.source_channels;
     // let mistral_token = init_config.main_config.mistral_token;
 
-    // println!("{:#?}", config);
-
     let mut client = login::login(api_id, api_hash, &session_file_name).await;
     let me = client.get_me().await.unwrap();
-    println!(
+    log_info!(
        "Username: {}", me.username().unwrap_or("No username"));
     let chated = resolve_chnnels(&mut client, channels.clone()).await?;
-    println!("Каналов найдено: {}", chated.len());
+    log_info!("Channels founded: {}", chated.len());
     join_channels(&mut client, &chated).await;
     if let Err(e) = monitor_and_forward(&mut client, &target, chated, "d").await {
-        eprintln!("Error from monitor_and_forward: {:?}", e)
+        log_error!("Error from monitor_and_forward: {:?}", e)
     };
 
     Ok(())
