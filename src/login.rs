@@ -3,6 +3,8 @@ use std::{io::{self, BufRead, Write}, ops::ControlFlow, time::Duration};
 use grammers_client::{Client, Config, InitParams, ReconnectionPolicy, SignInError};
 use grammers_session::Session;
 
+use crate::{log_error, log_info};
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub fn prompt(message: &str) -> Result<String> {
@@ -34,7 +36,7 @@ impl ReconnectionPolicy for MyPolicy {
         if attempts >= 5 {
             return ControlFlow::Break(()); // Прекращаем попытки
         }
-        println!("Переподключаемся...");
+        log_info!("Reconect...");
 
         // Вычисляем время ожидания с ограничением
         let duration = Duration::from_millis((2u64.pow(attempts as u32)).min(30000 as u64));
@@ -44,13 +46,13 @@ impl ReconnectionPolicy for MyPolicy {
 
 pub async fn login(api_id: i32, api_hash: String, session_file: &str) -> Client {
     let config = Config {
-        session: Session::load_file_or_create("session.session").unwrap(),
+        session: Session::load_file_or_create(session_file).unwrap(),
         api_id,
         api_hash,
         params: InitParams {
             reconnection_policy: &MyPolicy,
             flood_sleep_threshold: 0,
-            update_queue_limit: Some(40),
+            update_queue_limit: Some(128),
             ..Default::default()
         },
     };
@@ -74,11 +76,11 @@ pub async fn login(api_id: i32, api_hash: String, session_file: &str) -> Client 
             Ok(_) => (),
             Err(e) => panic!("{}", e),
         }
-        println!("Мы внутри");
+        log_info!("Access successful!");
         match client.session().save_to_file(session_file) {
             Ok(_) => {}
             Err(e) => {
-                println!("NOTE: failed to save the session, will sign out when done: {e}");
+                log_error!("NOTE: failed to save the session, will sign out when done: {e}");
             }
         }
     }
