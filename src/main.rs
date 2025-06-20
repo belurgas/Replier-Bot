@@ -15,6 +15,7 @@ mod login;
 mod config;
 mod handler;
 mod mistral;
+mod logging;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
