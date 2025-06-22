@@ -1,23 +1,30 @@
+use std::{collections::{HashMap, HashSet}, pin::Pin, sync::Arc, time::Duration};
+
 use dotenv::dotenv;
+use grammers_client::{
+    types::{Chat, Media, Message},
+    Client, InputMedia, InputMessage, InvocationError,
+};
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use tokio::{fs, sync::{mpsc, Mutex}, time::sleep};
 
-use grammers_client::types::{Channel, Chat, Downloadable, Media};
-use grammers_client::{Client, InputMedia, InputMessage, InvocationError, Update};
-use serde::Deserialize;
-use tokio::time::{interval, sleep};
-use std::collections::HashSet;
-use std::time::Duration;
+use crate::handler::generate;
 
-use crate::handlers::{generate, MediaGroupHandler};
-use crate::logging::logger::setup_logger;
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-mod handlers;
-mod config;
 mod login;
-mod bot;
+mod config;
+mod handler;
 mod mistral;
 mod logging;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+#[derive(PartialEq)]
+enum AiStatus {
+    Relevant,
+    Irrelevant,
+    Ad,
+}
 
 #[derive(Debug, Deserialize)]
 struct AproveData {
@@ -25,269 +32,249 @@ struct AproveData {
     text: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+struct History {
+    messages: HashMap<i64, Vec<i32>>, // chat_id -> Vec<message_id>
+}
 
-async fn join_channels(client: &mut Client, channels: &Vec<Channel>) {
-    for username in channels {
-        if let Err(e) = client.join_chat(username).await {
-                    log_error!("could not subscribe to {}: {:?}", username.title(), e);
-                } else {
-                    log_info!("Subscribed to {}", username.title());
-                }
-        sleep(Duration::from_millis(1500)).await;
+const HISTORY_FILE: &str = "history.json";
+
+async fn load_history() -> Result<History> {
+    if tokio::fs::try_exists(HISTORY_FILE).await? {
+        let data = tokio::fs::read_to_string(HISTORY_FILE).await?;
+        Ok(serde_json::from_str(&data)?)
+    } else {
+        Ok(History {
+            messages: HashMap::new(),
+        })
     }
 }
 
-#[derive(Debug, Default)]                        
-enum MediaType {
-    #[default]
-    None,
-    Photo,
-}
-
-async fn monitor_and_forward(client: &mut Client, target_channel: &str, chated: Vec<Channel>, mistral_token: &str) -> Result<()> {
-    let target = match client.resolve_username(target_channel).await? {
-        Some(t) => t,
-        None => return Err("Target channel not found".into()),
-    };
-
-    let group_handler = MediaGroupHandler::new(Duration::from_secs(1)).await;
-    let handler_clone = group_handler.clone();
-    let client_clone = client.clone();
-    let target_clone = target.clone();
-    tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(1));
-        loop {
-            interval.tick().await;
-            for (_, messages) in handler_clone.get_expired_groups().await {
-                if let Err(e) = client_clone.send_album(target_clone.clone(), messages).await {
-                    log_error!("Error seending media group: {}", e);
-                }
-            }
-        }
-    });
-
-
-    let mut none_relevant_group: HashSet<i64> = HashSet::new();
-    client.sync_update_state();
-    log_info!("Sync state");
-
-    
-
-    loop {
-        let upd = client.next_update().await.unwrap();
-        match upd {
-            Update::NewMessage(msg) if !msg.outgoing() => {
-                match msg.chat() {
-                    Chat::Channel(ch) => {
-                        log_info!("New message");
-                        if is_chat_in_list(&ch, &chated) {
-                            // Anticopy rules
-                            // download only first message
-                            if let Some(group_id) = msg.grouped_id() {
-                                if none_relevant_group.contains(&group_id) {
-                                    continue;
-                                }
-                            }
-                            if !msg.text().is_empty() {
-                                let msg_in_cahrs = msg.text().chars().count();                                
-                                let gend = generate(msg.text(), mistral_token).await?;
-                                if let Some(status_message) = gend.choices.first() {
-                                    let message = status_message.message.content.clone();                              
-                                    match serde_json::from_str::<AproveData>(&message) {
-                                        Ok(jj) => {
-                                            if jj.status != "релевантный" {
-                                                log_info!("No relevante message");
-                                                if let Some(group_id) = msg.grouped_id() {
-                                                    none_relevant_group.clear();
-                                                    none_relevant_group.insert(group_id);
-                                                }
-                                                continue;
-                                            } else {
-                                                log_info!("Relevante message");
-                                            }
-
-                                            if msg_in_cahrs > 1000 {
-                                                let message = jj.text;
-                                                log_info!("The text that should be: {}", message);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            log_error!("Json parsing error: {:?}", e);
-                                        }
-                                    }
-                                }
-                                log_info!("The tratment was successful.");
-                            }
-                            if ch.raw.noforwards {
-                                if let Some(media) = msg.media() {
-                                    let mut path = String::new();
-                                    let mut media_type = MediaType::None;
-
-                                    match media.clone() {
-                                        Media::Photo(_) => {
-                                            path = "./image.jpg".to_string();
-                                            media_type = MediaType::Photo
-                                        },
-                                        Media::Document(doc) => {
-                                            if let Some(mime) = doc.mime_type() {
-                                                if let Some(mime_format) = mime.split('/').last() {
-                                                    path = format!("./doc.{}", mime_format);
-                                                }
-                                            } else {
-                                                log_warn!("None mime type: {}", doc.name());
-                                            }
-                                        }
-                                        _ => {
-                                            // Nothin do with another media
-                                        }
-                                    };
-
-                                    let down = Downloadable::Media(media.clone());
-                                    client.download_media(&down, &path).await?;
-
-                                    let upload = client.upload_file(&path).await?;
-                                    
-                                    if !msg.text().is_empty() {
-                                        let text = msg.text();
-                                        match media_type {
-                                            MediaType::Photo => {
-                                                if let Err(e) = client.send_message(target.clone(), InputMessage::text(text).photo(upload)).await {
-                                                    match e {
-                                                        InvocationError::Rpc(rpc) => {
-                                                            log_error!("Error noforward media send: {:?}", rpc);
-                                                        }
-                                                        _ => {}
-                                                    }
-                                                }
-                                            }
-                                            _ => {                                                                                                           
-                                                client.send_message(target.clone(), InputMessage::text(text).document(upload)).await?;
-                                            }
-                                        }
-                                    } else {
-                                        if let None = msg.grouped_id() {
-                                            // Only message without text
-                                            client.send_message(target.clone(), InputMessage::default().document(upload)).await?;   
-                                        }
-                                    }
-                                } else {
-                                    // No media, just send text
-                                    if !msg.text().is_empty() {
-                                        let text = msg.text();
-                                        client.send_message(target.clone(), InputMessage::text(text)).await?;
-                                    }
-                                }
-                            } else {
-                                if let Some(grouped_id) = msg.grouped_id() {
-                                    if let Some(media) = msg.media() {
-                                        let caption = msg.text();
-                                        let media_data = InputMedia::caption(caption).copy_media(&media);
-                                        group_handler.add_media(grouped_id, media_data).await;
-                                        
-                                    }
-                                } else {
-                                    msg.forward_to(&target).await?;
-                                }
-                            }
-                        }
-                    }
-                    Chat::Group(gr) => {
-                        log_debug!("Message recv from: {}", gr.title());
-                    }
-                    d => {
-                        log_debug!("Unhandled type of chat: {:?}", d.username());
-                    }
-                }
-            }
-            _ => {} 
-        }
-    }
-}
-
-async fn resolve_chnnels(client: &mut Client, channels: Vec<String>) -> Result<Vec<Channel>> {
-    let mut channels_chat = Vec::new();
-
-    for name in channels {
-        let mut retry_count: u32= 0;
-        loop {
-            match client.resolve_username(&name).await {
-                Ok(Some(chat)) => match chat {
-                    Chat::Channel(ch) => {
-                        log_info!("Catch resolve: {}", ch.title());
-                        channels_chat.push(ch.clone());
-                        break;
-                    },
-                    _ => {
-                        // Ничего кроме каналов не добавляем
-                    }
-                },
-                Ok(None) => {    
-                    log_warn!("Could not find the chat: {}", name);
-                    break;
-                },
-                Err(e) => {
-                    match e {
-                        InvocationError::Rpc(rpc) => {
-                            if rpc.name == "FLOOD_WAIT" {
-                                if let Some(_time_to_wait) = rpc.value {
-                                    let time_to_wait = rpc.value.unwrap_or(5); // по умолчанию 5 секунд
-                                    log_info!("Catch FLOOD_WAIT, wait for {} seconds after retry...", time_to_wait);
-                                    sleep(Duration::from_secs((time_to_wait + 1).into())).await;
-
-                                    retry_count += 1;
-                                    if retry_count > 3 {
-                                        log_error!("Too mach retries for {}: {:?}", name, rpc);
-                                        break;
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                        err => {
-                            log_error!("Unknown error: {:?}", err);
-                            break;
-                        }
-                    }
-                },
-            }
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
-    Ok(channels_chat)
-}
-
-fn is_chat_in_list(chat: &Channel, channels: &Vec<Channel>) -> bool {
-    channels.iter().any(|c| 
-        c.id() == chat.id() || 
-        c.username().map_or(false, |u| u == chat.username().unwrap_or_default())
-    )
+async fn save_history(history: &History) -> Result<()> {
+    let data = serde_json::to_string_pretty(history)?;
+    tokio::fs::write(HISTORY_FILE, data).await?;
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
 
-    setup_logger().expect("Could not setting up logger");
-    let config = crate::config::Config::load_config().await?;
-    let init_config = config.clone();
-    let api_id = init_config.main_config.app_id;
-    let api_hash = init_config.main_config.api_hash;
-    let target = init_config.bot_settings.target_channel;
-    let session_file_name = init_config.main_config.session_file_name;
-    let session_file_name = format!("{}.session", session_file_name);
-    let channels = init_config.bot_settings.source_channels;
-    // let mistral_token = init_config.main_config.mistral_token;
+    let config = crate::config::Config::load_config().await.unwrap();
 
-    let mut client = login::login(api_id, api_hash, &session_file_name).await;
-    let me = client.get_me().await.unwrap();
-    log_info!(
-       "Username: {}", me.username().unwrap_or("No username"));
-    let chated = resolve_chnnels(&mut client, channels.clone()).await?;
-    log_info!("Channels founded: {}", chated.len());
-    join_channels(&mut client, &chated).await;
-    if let Err(e) = monitor_and_forward(&mut client, &target, chated, "d").await {
-        log_error!("Error from monitor_and_forward: {:?}", e)
-    };
+    let api_id = config.main_config.app_id;
+    let api_hash = config.main_config.api_hash.clone();
+    let target_username = config.bot_settings.target_channel.clone();
+    let session_file = format!("{}.session", config.main_config.session_file_name);
+    let channels = config.bot_settings.source_channels;
+    let mistral_token = config.main_config.mistral_token;
+
+    let mut client = Arc::new(login::login(api_id, api_hash, &session_file).await);
+    let me = client.get_me().await?;
+    println!("Username: {}", me.username().unwrap_or("No username"));
+
+    let target = client.resolve_username(&target_username).await?.unwrap();
+    println!("Target channel resolved: {:?}", target.name());
+
+    // let source_chats = resolve_channels(&mut client, channels).await?;
+    // println!("Resolved {} source channels", source_chats.len());
+
+    let mut input_chats: Vec<Chat> = Vec::new();
+    for chat in channels {
+        if let Some(ch) = client.resolve_username(&chat).await? {
+            input_chats.push(ch.clone());
+            println!("найден: {}", ch.name());
+        } else {
+            println!("не найден")
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+
+    process_chat(client, input_chats, target, mistral_token).await?;
+    
+
+    loop {
+        sleep(Duration::from_secs(3600)).await;
+    }
+
+    Ok(())
+}
+
+async fn process_chat(
+    client: Arc<Client>,
+    input_chats: Vec<Chat>,
+    target_chat: Chat,
+    mistral_token: String,
+) -> Result<()> {
+    let history = Arc::new(Mutex::new(load_history().await?));
+
+    for chat in input_chats {
+        let chat_id = chat.id();
+        let history_ref = Arc::clone(&history);
+        let client = Arc::clone(&client);
+        let mistral = mistral_token.clone();
+        let target = target_chat.clone();
+
+        tokio::spawn(async move {
+            loop {
+                // Блокировка только на время работы с историей
+                let mut history = history_ref.lock().await;
+
+                let mut messages = client.iter_messages(chat.clone()).limit(10);
+                let mut groups: HashMap<i64, Vec<Message>> = HashMap::new();
+
+                // Получаем список сообщений для этого чата
+                let chat_messages = history.messages.entry(chat_id).or_insert_with(Vec::new);
+
+                while let Some(message) = messages.next().await.unwrap() {
+                    let msg_id = message.id();
+
+                    if chat_messages.contains(&msg_id) {
+                        continue;
+                    }
+
+                    if let Some(group_id) = message.grouped_id() {
+                        chat_messages.push(msg_id);
+                        groups.entry(group_id).or_default().push(message);
+                    } else {
+                        chat_messages.push(msg_id);
+                        if let Some(media) = message.media() {
+                            println!("Я пидорас");
+                            let mut has_relevant = false;
+                            let mut ai_text = String::new();
+                            let gend = generate(message.text(), &mistral).await.unwrap();
+                            if let Some(choice) = gend.choices.first() {
+                                match serde_json::from_str::<AproveData>(&choice.message.content) {
+                                    Ok(data) => {
+                                        if data.status == "релевантный" {
+                                            has_relevant = true;
+                                            ai_text = data.text;
+                                        }
+                                    }
+                                    Err(e) => eprintln!("Ошибка парсинга JSON: {:?}", e),
+                                }
+                            }
+                            if has_relevant {
+                                if !message.text().is_empty() {
+                                    match client.send_album(target.clone(), vec![InputMedia::caption(ai_text).copy_media(&media)]).await {
+                                        Ok(dd) => {},
+                                        Err(e) => {
+                                            match e {                                
+                                                InvocationError::Rpc(rpc) => {
+                                                    if rpc.name == "FLOOD_WAIT" {
+                                                        println!("ждём... {:?}", rpc.value);
+                                                        sleep(Duration::from_secs(rpc.value.unwrap_or(10).into())).await;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            let mut has_relevant = false;
+                            let mut ai_text = String::new();
+                            let gend = generate(message.text(), &mistral).await.unwrap();
+                            if let Some(choice) = gend.choices.first() {
+                                match serde_json::from_str::<AproveData>(&choice.message.content) {
+                                    Ok(data) => {
+                                        if data.status == "релевантный" {
+                                            has_relevant = true;
+                                            ai_text = data.text;
+                                        }
+                                    }
+                                    Err(e) => eprintln!("Ошибка парсинга JSON: {:?}", e),
+                                }
+                            }
+                            if has_relevant {
+                                if !message.text().is_empty() {
+                                    match client.send_message(target.clone(), InputMessage::text(ai_text)).await {
+                                        Ok(dd) => {},
+                                        Err(e) => {
+                                            match e {                                        
+                                                InvocationError::Rpc(rpc) => {
+                                                    if rpc.name == "FLOOD_WAIT" {
+                                                        println!("ждём... {:?}", rpc.value);
+                                                        sleep(Duration::from_secs(rpc.value.unwrap_or(10).into())).await;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    sleep(Duration::from_secs(1)).await;
+                }
+
+                drop(history); // освобождаем мьютекс до обработки медиа
+
+                // --- Анализируем и отправляем медиа ---
+                for (group_id, mut messages_in_group) in groups {
+                    let mut media_group: Vec<InputMedia> = Vec::new();
+                    let mut has_relevant = false;
+                    let mut ai_text = String::new();
+
+                    for msg in &messages_in_group {
+                        if msg.text().is_empty() {
+                            continue;
+                        }
+
+                        let gend = generate(msg.text(), &mistral).await.unwrap();
+                        if let Some(choice) = gend.choices.first() {
+                            match serde_json::from_str::<AproveData>(&choice.message.content) {
+                                Ok(data) => {
+                                    if data.status == "релевантный" {
+                                        has_relevant = true;
+                                        ai_text = data.text;
+                                    }
+                                }
+                                Err(e) => eprintln!("Ошибка парсинга JSON: {:?}", e),
+                            }
+                        }
+                    }
+
+                    if has_relevant {
+                        for msg in &messages_in_group {
+                            if let Some(media) = msg.media() {
+                                let caption = msg.text();
+                                media_group.push(InputMedia::caption(caption).copy_media(&media));
+                            }
+                        }
+                    }
+
+                    if !media_group.is_empty() {
+                        match client.send_album(target.clone(), media_group).await {
+                            Ok(_) => println!("Успешно отправили альбом"),
+                            Err(e) => {
+                                if let InvocationError::Rpc(rpc) = &e {
+                                    println!("ждём... {:?}", rpc.value);
+                                    if rpc.name == "FLOOD_WAIT" {
+                                        let delay = rpc.value.unwrap_or(10) as u64;
+                                        sleep(Duration::from_secs(delay)).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Сохраняем историю раз в цикл
+                let history_to_save = Arc::clone(&history_ref);
+                let locked = history_to_save.lock().await;
+                if let Err(e) = save_history(&locked).await {
+                    eprintln!("Ошибка сохранения истории: {}", e);
+                }
+
+                sleep(Duration::from_secs(1)).await;
+            }
+        });
+    }
 
     Ok(())
 }
