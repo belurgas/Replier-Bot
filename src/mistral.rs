@@ -1,11 +1,7 @@
-#[warn(dead_code)]
-
 use std::error::Error;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-
-use crate::{log_debug, log_info};
 
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -23,15 +19,13 @@ struct MistralRequest {
 
 #[derive(Deserialize, Default, Debug)]
 pub struct MistralResponse {
-    #[serde(rename = "id")]
-    pub _id: String,
+    pub id: String,
     pub choices: Vec<Choice>,
 }
 
 #[derive(Deserialize, Default, Debug)]
 pub struct Choice {
-    #[serde(rename = "index")]
-    pub _index: i32,
+    pub index: i32,
     pub message: Message,
 }
 
@@ -50,7 +44,7 @@ impl MistralClient {
     }
 
     pub async fn get_response(&self, model: &str, temperature: f32, input_text: &str, system_prompt: &str, mistral_token: &str) -> Result<MistralResponse, Box<dyn Error>> {
-        log_info!("Sendind AI response");
+        println!("Отправляем ИИ запрос: {:#?}", input_text);
         
         let messages = vec![
             Message {
@@ -69,17 +63,16 @@ impl MistralClient {
             messages,
         };
 
-        let token = "29DAkIiKLknaPju4xFeghAbKpr5so1CC";
         let response = self.client
             .post(&self.api_url)
-            .bearer_auth(token)
+            .bearer_auth(mistral_token)
             .json(&request_body)
             .send()
             .await?;
 
         if response.status().is_success() {
             let data = response.json::<MistralResponse>().await?;
-            log_debug!("DATA: {:#?}", data);
+            println!("DATA: {:#?}", data);
             Ok(data)
         } else {
             Err(format!("Err: {}", response.status()).into())
