@@ -1,13 +1,13 @@
-use std::{collections::{HashMap, HashSet}, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use dotenv::dotenv;
 use grammers_client::{
-    types::{Chat, Media, Message},
+    types::{Chat, Message},
     Client, InputMedia, InputMessage, InvocationError,
 };
-use rand::Rng;
+
 use serde::{Deserialize, Serialize};
-use tokio::{fs, sync::{mpsc, Mutex}, time::sleep};
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::handler::generate;
 
@@ -19,12 +19,6 @@ mod logging;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-#[derive(PartialEq)]
-enum AiStatus {
-    Relevant,
-    Irrelevant,
-    Ad,
-}
 
 #[derive(Debug, Deserialize)]
 struct AproveData {
@@ -69,7 +63,7 @@ async fn main() -> Result<()> {
     let channels = config.bot_settings.source_channels;
     let mistral_token = config.main_config.mistral_token;
 
-    let mut client = Arc::new(login::login(api_id, api_hash, &session_file).await);
+    let client = Arc::new(login::login(api_id, api_hash, &session_file).await);
     let me = client.get_me().await?;
     log_info!("Username: {}", me.username().unwrap_or("No username"));
 
@@ -96,8 +90,6 @@ async fn main() -> Result<()> {
     loop {
         sleep(Duration::from_secs(3600)).await;
     }
-
-    Ok(())
 }
 
 async fn process_chat(
@@ -156,7 +148,7 @@ async fn process_chat(
                             if has_relevant {
                                 if !message.text().is_empty() {
                                     match client.send_album(target.clone(), vec![InputMedia::caption(ai_text).copy_media(&media)]).await {
-                                        Ok(dd) => {},
+                                        Ok(_) => {},
                                         Err(e) => {
                                             match e {                                
                                                 InvocationError::Rpc(rpc) => {
@@ -191,7 +183,7 @@ async fn process_chat(
                             if has_relevant {
                                 if !message.text().is_empty() {
                                     match client.send_message(target.clone(), InputMessage::text(ai_text)).await {
-                                        Ok(dd) => {},
+                                        Ok(_) => {},
                                         Err(e) => {
                                             match e {                                        
                                                 InvocationError::Rpc(rpc) => {
@@ -214,10 +206,10 @@ async fn process_chat(
                 drop(history); // освобождаем мьютекс до обработки медиа
 
                 // --- Анализируем и отправляем медиа ---
-                for (group_id, mut messages_in_group) in groups {
+                for (_group_id, messages_in_group) in groups {
                     let mut media_group: Vec<InputMedia> = Vec::new();
                     let mut has_relevant = false;
-                    let mut ai_text = String::new();
+                    let mut _ai_text = String::new();
 
                     for msg in &messages_in_group {
                         if msg.text().is_empty() {
@@ -230,7 +222,7 @@ async fn process_chat(
                                 Ok(data) => {
                                     if data.status == "релевантный" {
                                         has_relevant = true;
-                                        ai_text = data.text;
+                                        _ai_text = data.text;
                                     }
                                 }
                                 Err(e) => log_error!("JSON error parsing: {:?}", e),
