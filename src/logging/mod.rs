@@ -1,3 +1,3 @@
+pub mod config;
 pub mod logger;
 pub mod macros;
-pub mod config;
