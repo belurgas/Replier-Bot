@@ -71,10 +71,10 @@ async fn main() -> Result<()> {
 
     let mut client = Arc::new(login::login(api_id, api_hash, &session_file).await);
     let me = client.get_me().await?;
-    println!("Username: {}", me.username().unwrap_or("No username"));
+    log_info!("Username: {}", me.username().unwrap_or("No username"));
 
     let target = client.resolve_username(&target_username).await?.unwrap();
-    println!("Target channel resolved: {:?}", target.name());
+    log_info!("Target channel resolved: {:?}", target.name());
 
     // let source_chats = resolve_channels(&mut client, channels).await?;
     // println!("Resolved {} source channels", source_chats.len());
@@ -83,9 +83,9 @@ async fn main() -> Result<()> {
     for chat in channels {
         if let Some(ch) = client.resolve_username(&chat).await? {
             input_chats.push(ch.clone());
-            println!("найден: {}", ch.name());
+            log_info!("Not founded: {}", ch.name());
         } else {
-            println!("не найден")
+            log_info!("Not founded")
         }
         sleep(Duration::from_secs(1)).await;
     }
@@ -139,7 +139,6 @@ async fn process_chat(
                     } else {
                         chat_messages.push(msg_id);
                         if let Some(media) = message.media() {
-                            println!("Я пидорас");
                             let mut has_relevant = false;
                             let mut ai_text = String::new();
                             let gend = generate(message.text(), &mistral).await.unwrap();
@@ -151,7 +150,7 @@ async fn process_chat(
                                             ai_text = data.text;
                                         }
                                     }
-                                    Err(e) => eprintln!("Ошибка парсинга JSON: {:?}", e),
+                                    Err(e) => log_error!("JSON parsing error: {:?}", e),
                                 }
                             }
                             if has_relevant {
@@ -162,7 +161,7 @@ async fn process_chat(
                                             match e {                                
                                                 InvocationError::Rpc(rpc) => {
                                                     if rpc.name == "FLOOD_WAIT" {
-                                                        println!("ждём... {:?}", rpc.value);
+                                                        log_info!("Wait... {:?}", rpc.value);
                                                         sleep(Duration::from_secs(rpc.value.unwrap_or(10).into())).await;
                                                     }
                                                 }
@@ -186,7 +185,7 @@ async fn process_chat(
                                             ai_text = data.text;
                                         }
                                     }
-                                    Err(e) => eprintln!("Ошибка парсинга JSON: {:?}", e),
+                                    Err(e) => log_error!("JSON parsing error: {:?}", e),
                                 }
                             }
                             if has_relevant {
@@ -197,7 +196,7 @@ async fn process_chat(
                                             match e {                                        
                                                 InvocationError::Rpc(rpc) => {
                                                     if rpc.name == "FLOOD_WAIT" {
-                                                        println!("ждём... {:?}", rpc.value);
+                                                        log_info!("Wait... {:?}", rpc.value);
                                                         sleep(Duration::from_secs(rpc.value.unwrap_or(10).into())).await;
                                                     }
                                                 }
@@ -234,7 +233,7 @@ async fn process_chat(
                                         ai_text = data.text;
                                     }
                                 }
-                                Err(e) => eprintln!("Ошибка парсинга JSON: {:?}", e),
+                                Err(e) => log_error!("JSON error parsing: {:?}", e),
                             }
                         }
                     }
@@ -250,10 +249,10 @@ async fn process_chat(
 
                     if !media_group.is_empty() {
                         match client.send_album(target.clone(), media_group).await {
-                            Ok(_) => println!("Успешно отправили альбом"),
+                            Ok(_) => log_info!("Success send album"),
                             Err(e) => {
                                 if let InvocationError::Rpc(rpc) = &e {
-                                    println!("ждём... {:?}", rpc.value);
+                                    log_info!("Wait... {:?}", rpc.value);
                                     if rpc.name == "FLOOD_WAIT" {
                                         let delay = rpc.value.unwrap_or(10) as u64;
                                         sleep(Duration::from_secs(delay)).await;
@@ -268,7 +267,7 @@ async fn process_chat(
                 let history_to_save = Arc::clone(&history_ref);
                 let locked = history_to_save.lock().await;
                 if let Err(e) = save_history(&locked).await {
-                    eprintln!("Ошибка сохранения истории: {}", e);
+                    log_error!("Error while saving messages history: {}", e);
                 }
 
                 sleep(Duration::from_secs(1)).await;
