@@ -3,8 +3,6 @@ use std::{path::Path, process::exit};
 use tokio::fs;
 use serde::{Deserialize, Serialize};
 
-use crate::log_info;
-
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,7 +18,7 @@ pub struct MainConfig {
     pub app_title: String,
     pub app_shortname: String,
     pub session_file_name: String,
-    // pub mistral_token: String,
+    pub mistral_token: String,
     pub bot_token: Option<String>,
     pub users: Vec<User>,
 }
@@ -58,7 +56,7 @@ impl Config {
             let json_str = serde_json::to_string_pretty(&default_config)?;
 
             fs::write(path, json_str).await?;
-            log_info!("Создан новый конфиг-файл. Замените соответсвующие поля на ваши");
+            println!("Создан новый конфиг-файл. Замените соответсвующие поля на ваши");
             exit(0);
         }
 
