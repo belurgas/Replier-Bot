@@ -1,7 +1,7 @@
 /target
-/src/mistral.rs
-.env
 *.session
-*.jpg
 *.json
-*.mp4
+*.lock
+target/*
+src/mainds.rs
+src/database.rs
