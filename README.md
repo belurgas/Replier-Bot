@@ -1,26 +1,22 @@
-# Replier Bot ✨
-Open-Source Redirect Bot написанный полностью на Rust.
+# Installation
 
-# WARNING!
-В данный момент эта ветка не ведётся, актуальная рабочая версия в ветки iter_logc.
-Полностью переработанный подход к обработки сообщения с гарантированной обрабокти с обходом возможности не получения UpdateMessage от сервров телеграмма
+Clone repo with this bracnh:
 
-## Цели
+```bash
+git clone -b iter_logic --single-branch https://github.com/belurgas/Replier-Bot.git 
+```
 
-- [x]  Переотправка сообщений в target канал
 
-- [x]  Поддежка конфигурации через JSON
 
-- [x]  Поддержка всех видов сообщений
+After wthis write:
 
-- [ ]  Обход запрета на копирование ©
+```bash
+cd Replier-Bot
+cargo run --release (or debug if you want)
+```
 
-- [ ]  Поддержка нескольих target каналов
+Program will crate config file. You need to change config.json with your data. And after this run code again.
 
-- [ ]  Cloud Solution
 
-- [ ]  Telegram бот для локальной версии
-
-- [ ]  Централизованный telegram бот
 
 
