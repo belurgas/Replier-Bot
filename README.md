@@ -1,22 +1,11 @@
-# Installation
+# Replier Bot ✨
+Open-Source Redirect Bot написанный полностью на Rust.
 
-Clone repo with this bracnh:
+# Actualy
+Полностью переработанный подход к обработки сообщения с гарантированной обрабоктой с обходом возможности на получения UpdateMessage от сервров телеграмма
 
-```bash
-git clone -b iter_logic --single-branch https://github.com/belurgas/Replier-Bot.git 
-```
-
-
-
-After wthis write:
-
-```bash
-cd Replier-Bot
-cargo run --release (or debug if you want)
-```
-
-Program will crate config file. You need to change config.json with your data. And after this run code again.
-
-
-
-
+## Цели
+- [x] Переотправка сообщений в target канал
+- [x] Многомодульная интеграция
+- [ ] Поддержка всех видов сообщений
+- [ ]  Cloud Solution
